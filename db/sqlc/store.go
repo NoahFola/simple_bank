@@ -28,12 +28,20 @@ func (store *Store) execTx(ctx context.Context, fn func(*Queries) error) error {
 	err = fn(q)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
+			fmt.Println("error from transaction/rollback")
 			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 		}
 
 		return err
 	}
-	return tx.Commit()
+
+	comerr := tx.Commit()
+	if comerr != nil {
+		fmt.Println("commit err: ", comerr)
+		return comerr
+	}
+	fmt.Println("successful commit")
+	return nil
 
 }
 
@@ -79,6 +87,63 @@ func (store *Store) TransferTx(ctx context.Context, arg TransferTxParams) (Trans
 
 		if err != nil {
 			return err
+		}
+		if arg.FromAccountID < arg.ToAccountID {
+			fromAccount, err := q.GetAccountForUpdate(ctx, arg.FromAccountID)
+			if err != nil {
+				return err
+			}
+			toAccount, err := q.GetAccountForUpdate(ctx, arg.ToAccountID)
+			if err != nil {
+				return err
+			}
+
+			UpdateFromAccountParams := UpdateAccountParams{
+				ID:      fromAccount.ID,
+				Balance: fromAccount.Balance - arg.Amount,
+			}
+			UpdateToAccountParams := UpdateAccountParams{
+				ID:      toAccount.ID,
+				Balance: toAccount.Balance + arg.Amount,
+			}
+
+			result.FromAccount, err = q.UpdateAccount(ctx, UpdateFromAccountParams)
+			if err != nil {
+				return err
+			}
+
+			result.ToAccount, err = q.UpdateAccount(ctx, UpdateToAccountParams)
+			if err != nil {
+				return err
+			}
+		} else {
+			toAccount, err := q.GetAccountForUpdate(ctx, arg.ToAccountID)
+			if err != nil {
+				return err
+			}
+			fromAccount, err := q.GetAccountForUpdate(ctx, arg.FromAccountID)
+			if err != nil {
+				return err
+			}
+
+			UpdateFromAccountParams := UpdateAccountParams{
+				ID:      fromAccount.ID,
+				Balance: fromAccount.Balance - arg.Amount,
+			}
+			UpdateToAccountParams := UpdateAccountParams{
+				ID:      toAccount.ID,
+				Balance: toAccount.Balance + arg.Amount,
+			}
+
+			result.FromAccount, err = q.UpdateAccount(ctx, UpdateFromAccountParams)
+			if err != nil {
+				return err
+			}
+
+			result.ToAccount, err = q.UpdateAccount(ctx, UpdateToAccountParams)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
