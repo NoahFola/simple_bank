@@ -28,21 +28,15 @@ func (store *Store) execTx(ctx context.Context, fn func(*Queries) error) error {
 	err = fn(q)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			fmt.Println("error from transaction/rollback")
 			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 		}
-
 		return err
 	}
 
-	comerr := tx.Commit()
-	if comerr != nil {
-		fmt.Println("commit err: ", comerr)
-		return comerr
+	if comErr := tx.Commit(); comErr != nil {
+		return comErr
 	}
-	fmt.Println("successful commit")
 	return nil
-
 }
 
 type TransferTxParams struct {
@@ -59,92 +53,101 @@ type TransferTxResult struct {
 	ToEntry     Entry    `json:"to_entry"`
 }
 
+// context key for debugging
+type txKeyType string
+
+var txKey = txKeyType("txName")
+
 func (store *Store) TransferTx(ctx context.Context, arg TransferTxParams) (TransferTxResult, error) {
 	var result TransferTxResult
 
 	err := store.execTx(ctx, func(q *Queries) error {
 		var err error
 
-		result.Transfer, err = q.CreateTransfer(ctx, CreateTransferParams(arg))
+		// Extract transaction name for debugging
+		txName, _ := ctx.Value(txKey).(string)
 
+		fmt.Printf("[%s] >> START transaction\n", txName)
+
+		// Create transfer record
+		fmt.Printf("[%s] Creating transfer record\n", txName)
+		result.Transfer, err = q.CreateTransfer(ctx, CreateTransferParams(arg))
 		if err != nil {
 			return err
 		}
 
+		// Create debit entry
+		fmt.Printf("[%s] Creating debit entry for account %d\n", txName, arg.FromAccountID)
 		result.FromEntry, err = q.CreateEntry(ctx, CreateEntryParams{
 			AccountID: arg.FromAccountID,
 			Amount:    -arg.Amount,
 		})
-
 		if err != nil {
 			return err
 		}
 
+		// Create credit entry
+		fmt.Printf("[%s] Creating credit entry for account %d\n", txName, arg.ToAccountID)
 		result.ToEntry, err = q.CreateEntry(ctx, CreateEntryParams{
 			AccountID: arg.ToAccountID,
 			Amount:    arg.Amount,
 		})
-
 		if err != nil {
 			return err
 		}
+
+		// Lock accounts in consistent order
+		var fromAccount, toAccount Account
 		if arg.FromAccountID < arg.ToAccountID {
-			fromAccount, err := q.GetAccountForUpdate(ctx, arg.FromAccountID)
-			if err != nil {
-				return err
-			}
-			toAccount, err := q.GetAccountForUpdate(ctx, arg.ToAccountID)
-			if err != nil {
-				return err
-			}
-
-			UpdateFromAccountParams := UpdateAccountParams{
-				ID:      fromAccount.ID,
-				Balance: fromAccount.Balance - arg.Amount,
-			}
-			UpdateToAccountParams := UpdateAccountParams{
-				ID:      toAccount.ID,
-				Balance: toAccount.Balance + arg.Amount,
-			}
-
-			result.FromAccount, err = q.UpdateAccount(ctx, UpdateFromAccountParams)
+			fmt.Printf("[%s] Locking fromAccount %d\n", txName, arg.FromAccountID)
+			fromAccount, err = q.GetAccountForUpdate(ctx, arg.FromAccountID)
 			if err != nil {
 				return err
 			}
 
-			result.ToAccount, err = q.UpdateAccount(ctx, UpdateToAccountParams)
+			fmt.Printf("[%s] Locking toAccount %d\n", txName, arg.ToAccountID)
+			toAccount, err = q.GetAccountForUpdate(ctx, arg.ToAccountID)
 			if err != nil {
 				return err
 			}
 		} else {
-			toAccount, err := q.GetAccountForUpdate(ctx, arg.ToAccountID)
-			if err != nil {
-				return err
-			}
-			fromAccount, err := q.GetAccountForUpdate(ctx, arg.FromAccountID)
-			if err != nil {
-				return err
-			}
-
-			UpdateFromAccountParams := UpdateAccountParams{
-				ID:      fromAccount.ID,
-				Balance: fromAccount.Balance - arg.Amount,
-			}
-			UpdateToAccountParams := UpdateAccountParams{
-				ID:      toAccount.ID,
-				Balance: toAccount.Balance + arg.Amount,
-			}
-
-			result.FromAccount, err = q.UpdateAccount(ctx, UpdateFromAccountParams)
+			fmt.Printf("[%s] Locking toAccount %d\n", txName, arg.ToAccountID)
+			toAccount, err = q.GetAccountForUpdate(ctx, arg.ToAccountID)
 			if err != nil {
 				return err
 			}
 
-			result.ToAccount, err = q.UpdateAccount(ctx, UpdateToAccountParams)
+			fmt.Printf("[%s] Locking fromAccount %d\n", txName, arg.FromAccountID)
+			fromAccount, err = q.GetAccountForUpdate(ctx, arg.FromAccountID)
 			if err != nil {
 				return err
 			}
 		}
+
+		// Update balances
+		fmt.Printf("[%s] Updating balance of fromAccount %d: %d -> %d\n", txName,
+			fromAccount.ID, fromAccount.Balance, fromAccount.Balance-arg.Amount)
+
+		result.FromAccount, err = q.UpdateAccount(ctx, UpdateAccountParams{
+			ID:      fromAccount.ID,
+			Balance: fromAccount.Balance - arg.Amount,
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[%s] Updating balance of toAccount %d: %d -> %d\n", txName,
+			toAccount.ID, toAccount.Balance, toAccount.Balance+arg.Amount)
+
+		result.ToAccount, err = q.UpdateAccount(ctx, UpdateAccountParams{
+			ID:      toAccount.ID,
+			Balance: toAccount.Balance + arg.Amount,
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[%s] >> END transaction\n", txName)
 		return nil
 	})
 

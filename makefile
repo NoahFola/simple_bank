@@ -18,5 +18,12 @@ sqlc:
 test:
 	go test -v -cover ./...
 
+migrateup:
+	migrate -path db/migration -database "$(DB_URL)" -verbose up
 
-.PHONY: postgres createdb dropdb sqlc start
+# rollback last migration
+migratedown:
+	migrate -path db/migration -database "$(DB_URL)" -verbose down 1
+
+
+.PHONY: postgres createdb dropdb sqlc start migrateup migratedown
