@@ -1,6 +1,6 @@
 module github.com/NoahFola/simple_bank
 
-go 1.21
+go 1.21.0
 
 toolchain go1.24.6
 
