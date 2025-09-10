@@ -25,5 +25,13 @@ migrateup:
 migratedown:
 	migrate -path db/migration -database "postgresql://root:secret@localhost:5432/simple_bank?sslmode=disable" -verbose down 1
 
+server:
+	go run main.go
 
-.PHONY: postgres createdb dropdb sqlc start migrateup migratedown
+# Makefile (top-level)
+mock:
+	mockgen -package mockdb -destination db/mock/store.go github.com/NoahFola/simple_bank/db/sqlc Store
+
+
+.PHONY: postgres createdb dropdb sqlc start migrateup migratedown server mock
+
